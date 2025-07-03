@@ -14,11 +14,9 @@ from redis_om import get_redis_connection
 
 app = FastAPI()
 
-# Redis connection
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 redis = get_redis_connection(url=REDIS_URL, decode_responses=True)
 
-# Allow CORS for local frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,7 +29,6 @@ api = PlayerAPI()
 rating_service = RatingHistoryService()
 processor = PlayerRatingProcessor(api, rating_service)
 
-# Redis cache for get_players
 def cached_get_players(perf_type: str, quantity: int):
     key = f"players:{perf_type}:{quantity}"
     cached = redis.get(key)
