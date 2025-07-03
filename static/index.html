@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Chess Rankings</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        html, body { height: 100%; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #f4f6fa; color: #222; height: 100vh; min-height: 100vh; }
+        h1 { color: #2a3a5e; }
+        .container { max-width: 100vw; min-height: 100vh; margin: 0; background: #fff; border-radius: 0; box-shadow: none; padding: 2em 4vw; }
+        .controls { display: flex; flex-wrap: wrap; gap: 1em; margin-bottom: 1.5em; }
+        .controls label { font-weight: 500; }
+        .controls input, .controls select { padding: 0.3em 0.6em; border-radius: 4px; border: 1px solid #bbb; }
+        button { background: #2a3a5e; color: #fff; border: none; border-radius: 4px; padding: 0.5em 1.2em; font-size: 1em; cursor: pointer; transition: background 0.2s; }
+        button:hover { background: #1d2740; }
+        #output { margin-top: 2em; width: 100vw; min-height: 60vh; }
+        .chart-block { margin-bottom: 2em; background: #f8f8f8; border-radius: 10px; padding: 1em; box-shadow: 0 2px 8px #0001; max-width: 700px; margin-left: auto; margin-right: auto; }
+        .chart-title { font-size: 1.1em; margin-bottom: 0.5em; color: #2a3a5e; }
+        .plotly-graph-div { width: 100% !important; min-height: 220px; }
+        .error { color: #c00; margin-top: 1em; }
+        table { border-collapse: collapse; width: 100%; margin-top: 1em; }
+        th, td { border: 1px solid #e0e0e0; padding: 0.5em 0.7em; text-align: left; }
+        th { background: #f0f3fa; }
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 2em;
+            margin-top: 2em;
+        }
+        @media (max-width: 900px) {
+            .charts-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+    <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+</head>
+<body>
+<div class="container">
+    <h1>Chess Rankings Explorer</h1>
+    <div class="controls">
+        <label>Type:
+            <select id="type">
+                <option value="classical">Classical</option>
+                <option value="blitz">Blitz</option>
+                <option value="rapid">Rapid</option>
+            </select>
+        </label>
+        <label>Top N:
+            <input type="number" id="top" value="50" min="1" max="100">
+        </label>
+        <label>Days:
+            <input type="number" id="days" value="30" min="1" max="365">
+        </label>
+        <button onclick="listPlayers()">List Players</button>
+        <button onclick="showTopPlayerRatings()">Show Top Player's Ratings</button>
+        <button onclick="downloadCSV()">Download CSV</button>
+    </div>
+    <div id="output"></div>
+    <div class="error" id="error"></div>
+</div>
+<script>
+const apiBase = '';
+let plotlyCharts = [];
+
+function getParams() {
+    return {
+        type: document.getElementById('type').value,
+        top: document.getElementById('top').value,
+        days: document.getElementById('days').value
+    };
+}
+
+function clearOutput() {
+    document.getElementById('output').innerHTML = '';
+    document.getElementById('error').textContent = '';
+    plotlyCharts = [];
+}
+
+async function listPlayers() {
+    clearOutput();
+    const {type, top, days} = getParams();
+    const out = document.getElementById('output');
+    out.textContent = 'Loading...';
+    try {
+        const resp = await fetch(`${apiBase}/players?top=${top}&type=${type}`);
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        out.innerHTML = `<table><thead><tr><th>#</th><th>Username</th></tr></thead><tbody>` +
+            data.map((u, i) => `<tr><td>${i+1}</td><td><a href="#" class="username-link" data-username="${u}">${u}</a></td></tr>`).join('') +
+            `</tbody></table>`;
+        // Add click listeners
+        document.querySelectorAll('.username-link').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                showSinglePlayerChart(this.dataset.username);
+            });
+        });
+    } catch (e) {
+        document.getElementById('error').textContent = e.message;
+    }
+}
+
+async function showSinglePlayerChart(username) {
+    clearOutput();
+    const {type, days} = getParams();
+    const out = document.getElementById('output');
+    out.innerHTML = `<b>${username} - ${capitalize(type)} - Last ${days} Days</b>`;
+    try {
+        const resp = await fetch(`${apiBase}/players/${username}/ratings?type=${type}&days=${days}`);
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        // Plotly chart
+        const chartId = `plotly_single`;
+        const chartBlock = document.createElement('div');
+        chartBlock.className = 'chart-block';
+        chartBlock.innerHTML = `<div id="${chartId}" class="plotly-graph-div"></div>`;
+        out.appendChild(chartBlock);
+        const labels = Object.keys(data.ratings);
+        const dataPoints = Object.values(data.ratings);
+        Plotly.newPlot(chartId, [{
+            x: labels,
+            y: dataPoints,
+            mode: 'lines+markers',
+            name: data.username,
+            line: { color: getColor(0), width: 3 },
+            marker: { size: 6 }
+        }], {
+            margin: { t: 30, l: 50, r: 20, b: 50 },
+            title: '',
+            xaxis: { title: 'Date', tickangle: -45 },
+            yaxis: { title: 'Rating' },
+            height: 300,
+            width: 600,
+            plot_bgcolor: '#f8f8f8',
+            paper_bgcolor: '#f8f8f8',
+        }, {responsive: true, displayModeBar: true});
+        plotlyCharts.push(chartId);
+    } catch (e) {
+        document.getElementById('error').textContent = e.message;
+    }
+}
+
+async function showTopPlayerRatings() {
+    clearOutput();
+    const {type, days, top} = getParams();
+    const out = document.getElementById('output');
+    out.innerHTML = `<b>Top ${top} ${capitalize(type)} Players - Last ${days} Days</b>`;
+    try {
+        const resp = await fetch(`${apiBase}/players/ratings?top=${top}&type=${type}&days=${days}`);
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        const players = Array.isArray(data) ? data : [data];
+        if (players.length === 0) throw new Error('No data');
+        // Create grid container
+        const grid = document.createElement('div');
+        grid.className = 'charts-grid';
+        out.appendChild(grid);
+        // For each player, create a Plotly chart card in the grid
+        players.forEach((player, idx) => {
+            const chartId = `plotly_${idx}`;
+            const chartBlock = document.createElement('div');
+            chartBlock.className = 'chart-block';
+            chartBlock.innerHTML = `<div class="chart-title">${player.username}</div><div id="${chartId}" class="plotly-graph-div"></div>`;
+            grid.appendChild(chartBlock);
+            const labels = Object.keys(player.ratings);
+            const dataPoints = Object.values(player.ratings);
+            Plotly.newPlot(chartId, [{
+                x: labels,
+                y: dataPoints,
+                mode: 'lines+markers',
+                name: player.username,
+                line: { color: getColor(idx), width: 3 },
+                marker: { size: 6 }
+            }], {
+                margin: { t: 30, l: 50, r: 20, b: 50 },
+                title: '',
+                xaxis: { title: 'Date', tickangle: -45 },
+                yaxis: { title: 'Rating' },
+                height: 300,
+                width: 600,
+                plot_bgcolor: '#f8f8f8',
+                paper_bgcolor: '#f8f8f8',
+            }, {responsive: true, displayModeBar: true});
+            plotlyCharts.push(chartId);
+        });
+    } catch (e) {
+        document.getElementById('error').textContent = e.message;
+    }
+}
+
+function getColor(idx) {
+    // 10 visually distinct colors
+    const palette = [
+        '#2a3a5e', '#e4572e', '#17bebb', '#ffc914', '#76b041',
+        '#6a4c93', '#f45b69', '#4e8098', '#e2b534', '#3dccc7'
+    ];
+    return palette[idx % palette.length];
+}
+
+function capitalize(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function downloadCSV() {
+    const {type, top, days} = getParams();
+    window.location = `${apiBase}/players/ratings/csv?top=${top}&type=${type}&days=${days}`;
+}
+</script>
+</body>
+</html> 
