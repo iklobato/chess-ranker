@@ -1,16 +1,22 @@
-from fastapi import FastAPI, Query
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List
-import io
 import csv
-import os
+import io
 import json
-from api import PlayerAPI
-from services import RatingHistoryService, PlayerRatingProcessor, PlayerRatingHistoryService
-from models import PerfType, Player, RatingHistory
+import os
+from typing import List
+
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from redis_om import get_redis_connection
+
+from api import PlayerAPI
+from models import PerfType, Player, RatingHistory
+from services import (
+    PlayerRatingHistoryService,
+    PlayerRatingProcessor,
+    RatingHistoryService,
+)
 
 app = FastAPI()
 
@@ -29,6 +35,7 @@ api = PlayerAPI()
 rating_service = RatingHistoryService()
 processor = PlayerRatingProcessor(api, rating_service)
 
+
 def cached_get_players(perf_type: str, quantity: int):
     key = f"players:{perf_type}:{quantity}"
     cached = redis.get(key)
@@ -39,21 +46,31 @@ def cached_get_players(perf_type: str, quantity: int):
     redis.set(key, json.dumps([p.dict() for p in players]), ex=3600)
     return players
 
+
 @app.get("/players", response_model=List[str])
 def get_top_players(top: int = Query(50, gt=0, le=100), type: str = Query("classical")):
     try:
         perf_enum = PerfType(type.lower())
     except ValueError:
-        return JSONResponse({"error": f"Invalid performance type: {type}"}, status_code=400)
+        return JSONResponse(
+            {"error": f"Invalid performance type: {type}"}, status_code=400
+        )
     players = cached_get_players(perf_enum.value, top)
     return [p.username for p in players]
 
+
 @app.get("/players/ratings")
-def get_top_players_ratings(top: int = Query(1, gt=0, le=100), type: str = Query("classical"), days: int = Query(30, gt=0, le=365)):
+def get_top_players_ratings(
+    top: int = Query(1, gt=0, le=100),
+    type: str = Query("classical"),
+    days: int = Query(30, gt=0, le=365),
+):
     try:
         perf_enum = PerfType(type.lower())
     except ValueError:
-        return JSONResponse({"error": f"Invalid performance type: {type}"}, status_code=400)
+        return JSONResponse(
+            {"error": f"Invalid performance type: {type}"}, status_code=400
+        )
     players = cached_get_players(perf_enum.value, top)
     if not players:
         return JSONResponse({"error": "No player found"}, status_code=404)
@@ -65,15 +82,24 @@ def get_top_players_ratings(top: int = Query(1, gt=0, le=100), type: str = Query
         result.append({"username": player.username, "ratings": ratings})
     return result if top > 1 else result[0]
 
+
 @app.get("/players/ratings/csv")
-def get_top_players_ratings_csv(top: int = Query(50, gt=0, le=100), type: str = Query("classical"), days: int = Query(30, gt=0, le=365)):
+def get_top_players_ratings_csv(
+    top: int = Query(50, gt=0, le=100),
+    type: str = Query("classical"),
+    days: int = Query(30, gt=0, le=365),
+):
     try:
         perf_enum = PerfType(type.lower())
     except ValueError:
-        return JSONResponse({"error": f"Invalid performance type: {type}"}, status_code=400)
+        return JSONResponse(
+            {"error": f"Invalid performance type: {type}"}, status_code=400
+        )
     players = cached_get_players(perf_enum.value, top)
     players = list(players)
-    player_histories = [(p, PlayerRatingHistoryService.get_rating_history(p.username)) for p in players]
+    player_histories = [
+        (p, PlayerRatingHistoryService.get_rating_history(p.username)) for p in players
+    ]
     csv_data = processor.process_players_rating_data(player_histories, perf_enum, days)
     date_headers = rating_service.generate_date_headers(days)
     headers = ["username"] + date_headers
@@ -83,21 +109,32 @@ def get_top_players_ratings_csv(top: int = Query(50, gt=0, le=100), type: str = 
     writer.writerows(csv_data)
     output.seek(0)
     filename = f"top_{top}_{type}_ratings_{days}days.csv"
-    return StreamingResponse(output, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
+    return StreamingResponse(
+        output,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
 
 @app.get("/players/{username}/ratings")
-def get_player_ratings(username: str, type: str = Query("classical"), days: int = Query(30, gt=0, le=365)):
+def get_player_ratings(
+    username: str, type: str = Query("classical"), days: int = Query(30, gt=0, le=365)
+):
     try:
         perf_enum = PerfType(type.lower())
     except ValueError:
-        return JSONResponse({"error": f"Invalid performance type: {type}"}, status_code=400)
+        return JSONResponse(
+            {"error": f"Invalid performance type: {type}"}, status_code=400
+        )
     rating_history = PlayerRatingHistoryService.get_rating_history(username)
     perf_history = rating_history.perfs.get(perf_enum.name.capitalize(), [])
     ratings = rating_service.get_ratings(perf_history, days)
     return {"username": username, "ratings": ratings}
 
+
 @app.get("/")
 def serve_index():
     return FileResponse(os.path.join("static", "index.html"))
 
-app.mount("/static", StaticFiles(directory="static"), name="static") 
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
