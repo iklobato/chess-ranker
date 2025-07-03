@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from api import PlayerAPI
-from services import RatingHistoryService, PlayerRatingProcessor
+from services import RatingHistoryService, PlayerRatingProcessor, PlayerRatingHistoryService
 from output import PlayerOutput
 from models import PerfType
 
@@ -24,7 +24,7 @@ class ChessRankingApp:
 
     async def get_ratings(self, player, perf_type: str, days: int):
         loop = asyncio.get_event_loop()
-        rating_histories = await loop.run_in_executor(None, lambda: player.rating_history)
+        rating_histories = await loop.run_in_executor(None, lambda: PlayerRatingHistoryService.get_rating_history(player.username))
         perf_history = rating_histories.perfs.get(perf_type.capitalize(), [])
         if not perf_history:
             logging.info(f"No {perf_type} rating history for {player.username}")
@@ -40,31 +40,10 @@ class ChessRankingApp:
             return []
         # Fetch all rating histories concurrently
         loop = asyncio.get_event_loop()
-        rating_histories = await asyncio.gather(*[loop.run_in_executor(None, lambda p=player: p.rating_history) for player in players])
-        csv_data = []
-        date_headers = self.rating_service.generate_date_headers(days)
+        rating_histories = await asyncio.gather(*[loop.run_in_executor(None, lambda p=player: PlayerRatingHistoryService.get_rating_history(p.username)) for player in players])
         for player, rating_history in zip(players, rating_histories):
-            perf_history = rating_history.perfs.get(perf_enum.name.capitalize(), [])
-            row = [player.username]
-            last_known_rating = None
-            for date_header in date_headers:
-                date_obj = self.rating_service.datetime.strptime(date_header, '%Y-%m-%d')
-                rating = self.rating_service.get_rating_for_date(perf_history, date_obj)
-                if rating is not None:
-                    last_known_rating = rating
-                    row.append(rating)
-                elif last_known_rating is not None:
-                    row.append(last_known_rating)
-                else:
-                    perf = player.perfs.get(perf_type)
-                    current_rating = perf.rating if perf else None
-                    if current_rating:
-                        last_known_rating = current_rating
-                        row.append(current_rating)
-                    else:
-                        row.append('')
-            csv_data.append(row)
-        return csv_data
+            player.rating_history = rating_history
+        return self.processor.process_players_rating_data(players, perf_enum, days)
 
     def generate_csv(self, csv_data, headers, filename):
         self.output.save_to_csv(csv_data, headers, filename)

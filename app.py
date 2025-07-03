@@ -7,7 +7,7 @@ import csv
 import os
 import json
 from api import PlayerAPI
-from services import RatingHistoryService, PlayerRatingProcessor
+from services import RatingHistoryService, PlayerRatingProcessor, PlayerRatingHistoryService
 from models import PerfType, Player, RatingHistory
 from fastapi.staticfiles import StaticFiles
 from redis_om import get_redis_connection
@@ -42,17 +42,6 @@ def cached_get_players(perf_type: str, quantity: int):
     redis.set(key, json.dumps([p.dict() for p in players]), ex=3600)
     return players
 
-# Redis cache for player rating history
-def cached_rating_history(username: str):
-    key = f"rating_history:{username}"
-    cached = redis.get(key)
-    if cached:
-        return RatingHistory.parse_obj(json.loads(cached))
-    p = Player(id=username, username=username)
-    rh = p.rating_history
-    redis.set(key, json.dumps(rh.dict()), ex=3600)
-    return rh
-
 @app.get("/players", response_model=List[str])
 def get_top_players(top: int = Query(50, gt=0, le=100), type: str = Query("classical")):
     try:
@@ -73,7 +62,7 @@ def get_top_players_ratings(top: int = Query(1, gt=0, le=100), type: str = Query
         return JSONResponse({"error": "No player found"}, status_code=404)
     result = []
     for player in players:
-        rating_history = cached_rating_history(player.username)
+        rating_history = PlayerRatingHistoryService.get_rating_history(player.username)
         perf_history = rating_history.perfs.get(perf_enum.name.capitalize(), [])
         ratings = rating_service.get_ratings(perf_history, days)
         result.append({"username": player.username, "ratings": ratings})
@@ -87,8 +76,9 @@ def get_top_players_ratings_csv(top: int = Query(50, gt=0, le=100), type: str = 
         return JSONResponse({"error": f"Invalid performance type: {type}"}, status_code=400)
     players = cached_get_players(perf_enum.value, top)
     players = list(players)
+    rating_histories = {p.username: PlayerRatingHistoryService.get_rating_history(p.username) for p in players}
     for p in players:
-        p._rating_history = cached_rating_history(p.username)
+        p.rating_history = rating_histories[p.username]
     csv_data = processor.process_players_rating_data(players, perf_enum, days)
     date_headers = rating_service.generate_date_headers(days)
     headers = ["username"] + date_headers
@@ -106,7 +96,7 @@ def get_player_ratings(username: str, type: str = Query("classical"), days: int 
         perf_enum = PerfType(type.lower())
     except ValueError:
         return JSONResponse({"error": f"Invalid performance type: {type}"}, status_code=400)
-    rating_history = cached_rating_history(username)
+    rating_history = PlayerRatingHistoryService.get_rating_history(username)
     perf_history = rating_history.perfs.get(perf_enum.name.capitalize(), [])
     ratings = rating_service.get_ratings(perf_history, days)
     return {"username": username, "ratings": ratings}

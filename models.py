@@ -29,7 +29,6 @@ class Player(BaseModel):
     id: str
     username: str
     perfs: Dict[str, Performance] = Field(default_factory=dict)
-    _rating_history: Optional[RatingHistory] = None
 
     @property
     def rating_history(self) -> RatingHistory:

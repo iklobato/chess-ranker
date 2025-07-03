@@ -1,7 +1,15 @@
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
-from models import RatingHistoryEntry, PerfType, Player
+from models import RatingHistoryEntry, PerfType, Player, RatingHistory
 import time
+import os
+import json
+import requests
+from redis_om import get_redis_connection
+
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+redis = get_redis_connection(url=REDIS_URL, decode_responses=True)
+API_BASE_URL = os.environ.get("LICHESS_API_BASE_URL", "https://lichess.org/api")
 
 class RatingHistoryService:
     def get_rating_for_date(self, rating_history: List[RatingHistoryEntry], target_date: datetime):
@@ -48,11 +56,16 @@ class PlayerRatingProcessor:
         self.rating_service = rating_service
 
     def process_players_rating_data(self, players: List[Player], perf_type: PerfType, days: int) -> List[List[Any]]:
+        """
+        Expects each Player to have a .rating_history attribute (set by the caller, e.g., from PlayerRatingHistoryService).
+        """
         date_headers = self.rating_service.generate_date_headers(days)
         csv_data = []
         for i, player in enumerate(players, 1):
             username = player.username
-            rating_histories = player.rating_history
+            rating_histories = getattr(player, 'rating_history', None)
+            if rating_histories is None:
+                raise ValueError(f"Player {username} missing rating_history. Set via PlayerRatingHistoryService before calling.")
             perf_history = rating_histories.perfs.get(perf_type.name.capitalize(), [])
             row = [username]
             last_known_rating = None
@@ -74,4 +87,30 @@ class PlayerRatingProcessor:
                         row.append('')
             csv_data.append(row)
             time.sleep(0.1)
-        return csv_data 
+        return csv_data
+
+class PlayerRatingHistoryService:
+    """
+    Service to fetch and cache a player's rating history from Lichess API.
+    """
+    @staticmethod
+    def get_rating_history(username: str) -> RatingHistory:
+        key = f"rating_history:{username}"
+        cached = redis.get(key)
+        if cached:
+            return RatingHistory.parse_obj(json.loads(cached))
+        try:
+            resp = requests.get(f'{API_BASE_URL}/user/{username}/rating-history')
+            resp.raise_for_status()
+            data = resp.json()
+            perfs = {}
+            for perf in data:
+                entries = [RatingHistoryEntry(year=e[0], month=e[1], day=e[2], rating=e[3]) for e in perf['points']]
+                perfs[perf['name']] = entries
+            rh = RatingHistory(perfs=perfs)
+            redis.set(key, json.dumps(rh.dict()), ex=3600)
+            return rh
+        except requests.RequestException:
+            rh = RatingHistory(perfs={})
+            redis.set(key, json.dumps(rh.dict()), ex=3600)
+            return rh 
