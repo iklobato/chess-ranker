@@ -73,10 +73,8 @@ def get_top_players_ratings_csv(top: int = Query(50, gt=0, le=100), type: str = 
         return JSONResponse({"error": f"Invalid performance type: {type}"}, status_code=400)
     players = cached_get_players(perf_enum.value, top)
     players = list(players)
-    rating_histories = {p.username: PlayerRatingHistoryService.get_rating_history(p.username) for p in players}
-    for p in players:
-        p.rating_history = rating_histories[p.username]
-    csv_data = processor.process_players_rating_data(players, perf_enum, days)
+    player_histories = [(p, PlayerRatingHistoryService.get_rating_history(p.username)) for p in players]
+    csv_data = processor.process_players_rating_data(player_histories, perf_enum, days)
     date_headers = rating_service.generate_date_headers(days)
     headers = ["username"] + date_headers
     output = io.StringIO()

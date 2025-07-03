@@ -38,7 +38,6 @@ class ChessRankingApp:
         except ValueError:
             logging.error(f"Invalid performance type: {perf_type}")
             return []
-        
         loop = asyncio.get_event_loop()
         rating_histories = await asyncio.gather(*[loop.run_in_executor(None, lambda p=player: PlayerRatingHistoryService.get_rating_history(p.username)) for player in players])
         for player, rating_history in zip(players, rating_histories):
@@ -56,24 +55,20 @@ async def main():
     output = PlayerOutput()
     app = ChessRankingApp(api, rating_service, processor, output)
 
-    
     players = app.get_players("classical", 50)
     app.output.print_player_usernames(players)
 
-    
     top_players = app.get_players("classical", 1)
     if top_players:
         player = top_players[0]
         ratings = await app.get_ratings(player, "Classical", 30)
         app.output.print_rating_history(player.username, ratings)
 
-    
     csv_data = await app.process_players_rating_data("classical", 50, 30)
     date_headers = app.rating_service.generate_date_headers(30)
     headers = ['username'] + date_headers
     app.generate_csv(csv_data, headers, 'top_50_classical_ratings.csv')
 
-    
     blitz_players = app.get_players("blitz", 5)
     app.output.print_player_usernames(blitz_players)
     rapid_players = app.get_players("rapid", 3)

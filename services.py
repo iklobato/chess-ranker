@@ -55,17 +55,11 @@ class PlayerRatingProcessor:
         self.api = api
         self.rating_service = rating_service
 
-    def process_players_rating_data(self, players: List[Player], perf_type: PerfType, days: int) -> List[List[Any]]:
-        """
-        Expects each Player to have a .rating_history attribute (set by the caller, e.g., from PlayerRatingHistoryService).
-        """
+    def process_players_rating_data(self, player_histories: list[tuple[Player, RatingHistory]], perf_type: PerfType, days: int) -> list[list[Any]]:
         date_headers = self.rating_service.generate_date_headers(days)
         csv_data = []
-        for i, player in enumerate(players, 1):
+        for i, (player, rating_histories) in enumerate(player_histories, 1):
             username = player.username
-            rating_histories = getattr(player, 'rating_history', None)
-            if rating_histories is None:
-                raise ValueError(f"Player {username} missing rating_history. Set via PlayerRatingHistoryService before calling.")
             perf_history = rating_histories.perfs.get(perf_type.name.capitalize(), [])
             row = [username]
             last_known_rating = None
@@ -90,9 +84,6 @@ class PlayerRatingProcessor:
         return csv_data
 
 class PlayerRatingHistoryService:
-    """
-    Service to fetch and cache a player's rating history from Lichess API.
-    """
     @staticmethod
     def get_rating_history(username: str) -> RatingHistory:
         key = f"rating_history:{username}"
